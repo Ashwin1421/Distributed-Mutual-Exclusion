@@ -19,6 +19,7 @@ public class Utils {
     Properties config = new Properties();
     InputStream configInput = null;
     public String Coordinator;
+    public String Algorithm;
     public int N;
     public int t1;
     public int t2;
@@ -38,7 +39,7 @@ public class Utils {
             this.t1 = Integer.parseInt(config.getProperty("t1"));
             this.t2 = Integer.parseInt(config.getProperty("t2"));
             this.t3 = Integer.parseInt(config.getProperty("t3"));
-            
+            this.Algorithm = config.getProperty("algorithm");
             
         }else{
             System.out.println("Config File doesn't exist!");
