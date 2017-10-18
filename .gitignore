@@ -1,5 +1,7 @@
+# Class files
+*.class
+# build dir
+build
 # test dir
 test
-# class files
-*.class
 
