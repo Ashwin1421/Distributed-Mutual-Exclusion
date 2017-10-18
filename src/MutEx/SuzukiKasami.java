@@ -30,8 +30,8 @@ public class SuzukiKasami {
         this.PROCESS_LIST = PROCESS_LIST;
         this.N = PROCESS_LIST.size();
         this.pid = pid;
-        this.RN = new Integer[N];
-        this.LN = new Integer[N];
+        this.RN = new Integer[N+1];
+        this.LN = new Integer[N+1];
         Arrays.fill(RN, 0);
         Arrays.fill(LN, 0);
     }
@@ -84,6 +84,10 @@ public class SuzukiKasami {
          * Sending a release message to other processes.
          **/
         LN[index] = RN[index];
+        for(PrintWriter out: PROCESS_LIST.keySet()){
+            out.println("RELEASE_CS="+index);
+        }
+        
     }
     
     public void executeCS(){

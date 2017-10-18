@@ -19,6 +19,7 @@ import java.util.Properties;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import MutEx.SuzukiKasami;
+import java.util.Random;
 
 /**
  *
@@ -34,7 +35,7 @@ public class Coordinator {
     int PROCESS_ID;
     Map<Socket, Integer> PROC_IDS = new HashMap<>();
     Utils prop =new Utils();
-    
+    public static int ready_count = 0;
     
     public Coordinator(int PORT, int pid){
         this.PORT = PORT;
@@ -42,7 +43,6 @@ public class Coordinator {
         
     }
 
-    
     public void start(){
         try {
             coordinatorSocket = new ServerSocket(this.PORT);
@@ -78,74 +78,81 @@ class processHandler extends Thread{
         this.PROCESS_IDS = PROCESS_IDS;
     }
 
-    public Socket getSocket(Integer pid){
-        for(Socket s: PROCESS_IDS.keySet()){
-            if(PROCESS_IDS.get(s).equals(pid)){
-                return s;
+    public void print(String text){
+        System.out.println("["+prop.Coordinator+"]$:"+text);
+    }
+    public void send(PrintWriter out, String msg){
+        out.println(msg);
+        print("SENT="+msg);
+    }
+    
+    public void receive(String msg){
+        print("RECEIVED="+msg);
+    }
+    
+    public void configure(){
+        for(Socket p: PROCESS_IDS.keySet()){
+            try {
+                PROCESS_LIST.put(new PrintWriter(p.getOutputStream(), true), PROCESS_IDS.get(p));
+            } catch (IOException ex) {
+                Logger.getLogger(processHandler.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
+    }
+    public Socket getProcessSocket(Integer id){
+        for(Socket p: PROCESS_IDS.keySet()){
+            if(PROCESS_IDS.get(p).equals(id)){
+                return p;
             }
         }
         return null;
     }
     
-    public void send(PrintWriter out, String msg){
-        out.println(msg);
-        System.out.println("SENT="+msg);
-    }
-    
-    public void receive(String msg){
-        System.out.println("RECEIVED="+msg);
-    }
-    
-    public void configure(){
-        if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
-            for(Socket p: PROCESS_IDS.keySet()){
-                try {
-                    PROCESS_LIST.put(new PrintWriter(p.getOutputStream(), true), PROCESS_IDS.get(p));
-                } catch (IOException ex) {
-                    Logger.getLogger(processHandler.class.getName()).log(Level.SEVERE, null, ex);
-                }
-            }
-        }else{
-            for(Socket p: PROCESS_IDS.keySet()){
-                for(Integer nb_pid: prop.getNBList(1)){
-                    if(PROCESS_IDS.get(p).equals(nb_pid)){
-                        try {
-                            PROCESS_LIST.put(new PrintWriter(p.getOutputStream(), true), nb_pid);
-                        } catch (IOException ex) {
-                            Logger.getLogger(processHandler.class.getName()).log(Level.SEVERE, null, ex);
-                        }
-                    }
-                }
-            }
+    public void sleep(){
+        Random rnd = new Random(System.currentTimeMillis()+1);
+        try {
+            long t = rnd.nextInt(prop.t2-prop.t1)+1;
+            print("Sleeping for "+t+" millis.");
+            Thread.sleep(t);
+        } catch (InterruptedException ex) {
+            Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
-    
     public void sendAll(){
         /**
          * Constructing a message with process id.
          **/
         String pid_msg = "PID=";
         String nb_msg = "PHOST=";
-        
+        String root_msg = "ROOT=";
         if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
             for(Socket p: PROCESS_IDS.keySet()){
                 nb_msg += "("+p.getInetAddress().getHostName()+","+PROCESS_IDS.get(p)+")"+"/";
             }
+            for(PrintWriter out: PROCESS_LIST.keySet()){
+                send(out, pid_msg+PROCESS_LIST.get(out)+";"+nb_msg);
+            }
         } else{
-            for(Socket p: PROCESS_IDS.keySet()){
-                for(Integer nb_pid: prop.getNBList(PROCESS_IDS.get(p))){
-                    if(nb_pid == 1){
-                        nb_msg += "coordinator"+"/";
-                    } else{
-                        nb_msg += "("+p.getInetAddress().getHostName()+","+nb_pid+")"+"/";
+            for(Socket process : PROCESS_IDS.keySet()){
+                Integer id = prop.getParent(PROCESS_IDS.get(process));
+                for(PrintWriter out: PROCESS_LIST.keySet()){
+                    if(PROCESS_IDS.get(process).equals(PROCESS_LIST.get(out))){
+                        if(id!=null){
+                            if(id == 1){
+                                root_msg += "("+"coordinator"+","+id+")"+"/";
+                                send(out, pid_msg+PROCESS_LIST.get(out)+";"+root_msg);
+                                root_msg = "ROOT=";
+                            }else{
+                                root_msg += "("+getProcessSocket(id).getInetAddress().getHostName()+","+id+")"+"/";
+                                send(out, pid_msg+PROCESS_LIST.get(out)+";"+root_msg);
+                                root_msg = "ROOT=";
+                            }
+                        }
                     }
                 }
-                nb_msg = "PHOST=";
             }
         }
-        for(PrintWriter out: PROCESS_LIST.keySet()){
-            send(out, pid_msg+PROCESS_LIST.get(out)+";"+nb_msg);
-        }
+        
     }
     
     @Override
@@ -158,7 +165,7 @@ class processHandler extends Thread{
             System.out.println("Connected to ["+processSocket.getRemoteSocketAddress()+"].");
             
             
-            int ready_count = 0;
+            
             while(true){
                 recvMsg = inputReader.readLine();
                 receive(recvMsg);
@@ -172,24 +179,10 @@ class processHandler extends Thread{
                 }
                 
                 if(recvMsg.startsWith("READY")){
-                    
-                    System.out.println(processSocket.getRemoteSocketAddress());
-                    ready_count++;
-                    if(ready_count == (prop.N-1)){
-                        //break;
-                        
+                    Coordinator.ready_count++;
+                    if(Coordinator.ready_count == (prop.N-1)){
+                        sleep();
                     }
-                }
-                
-                
-                if(recvMsg.startsWith("REQUEST_CS")){
-                    
-                    SuzukiKasami sk = new SuzukiKasami(1, PROCESS_LIST);
-                    sk.setToken(true);
-                    int pid = Integer.parseInt(recvMsg.split("=")[1].split(";")[0]);
-                    int RNp = Integer.parseInt(recvMsg.split("=")[1].split(";")[1]);
-                    sk.receiveCSRequest(pid, RNp);
-                    System.out.println(sk.hasToken());
                 }
                 
             }

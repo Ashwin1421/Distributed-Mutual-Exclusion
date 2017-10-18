@@ -2,7 +2,10 @@ package Utilities;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Arrays;
+import java.util.LinkedList;
 import java.util.Properties;
+import java.util.Queue;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -46,14 +49,21 @@ public class Utils {
         }
     }
     
-    public Integer[] getNBList(Integer pid){
-        String[] nblist = config.getProperty(pid.toString()).split(",");
-        Integer[] NB_LIST = new Integer[nblist.length];
-        int i=0;
-        for(String nb: nblist){
-            NB_LIST[i++] = Integer.parseInt(nb);
+    public Integer getParent(Integer pid){
+        if(config.getProperty(pid.toString()).equalsIgnoreCase("null")){
+            return null;
         }
-        return NB_LIST;
+        Integer parentNode = Integer.parseInt(config.getProperty(pid.toString()));
+        return parentNode;
     }
     
+    public Queue<Integer> getChildren(Integer pid){
+        Queue<Integer> children = new LinkedList<>();
+        for(int id=2;id<=N;id++){
+            if(getParent(id).equals(pid) && getParent(id)!=null){
+                children.add(id);
+            }
+        }
+        return children;
+    }
 }
