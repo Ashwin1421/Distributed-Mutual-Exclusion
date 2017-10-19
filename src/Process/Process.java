@@ -48,7 +48,7 @@ public class Process {
         this.HOST = HOST;
         this.PORT = PORT;
     }
-    
+   
     public void print(String text){
         System.out.println("["+processSocket.getInetAddress().getHostName()+"]$:"+text);
     }
@@ -118,18 +118,57 @@ public class Process {
             send(out, msg);
         }
     }
+    
+    /**
+     * Run Mutual Exclusion algorithm 
+     * (Suzuki-Kasami or Raymond's) 
+     * N times.
+     **/
+    public void simulate(int N){
+        SuzukiKasami sk = new SuzukiKasami(PID, P_LIST);
+        Raymond rd = new Raymond(PID, P_LIST);
+        for(int i=1;i<=N;i++){
+            if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                /**
+                 * Step:1
+                 * Sleep for some time and 
+                 * then start requesting.
+                 **/
+                sleep();
+                /**
+                 * Step:2
+                 * If a process doesn't have 
+                 * the token then request 
+                 * for the token to everyone.
+                 **/
+                if(!sk.hasToken()){
+                    sk.requestCS(PID);
+                }
+                /**
+                 * Else if the process does 
+                 * have the token then receive 
+                 * the request and deal with 
+                 * it accordingly.
+                 **/
+                else{
+                    sk.receiveCSRequest(i, seqNo);
+                }
+                //Step:3
+            }else{
+                
+            }
+        }
+    }
     public void start(){
         String sendMsg, recvMsg;
         long t1 = 0, t2;
         try {
             processSocket = new Socket(HOST, PORT);
-            print("Started PROCESS at ["+processSocket.getLocalSocketAddress()+"].");
-            print("Connected to Coordinator.");
+            print("Process started at ["+processSocket.getLocalSocketAddress()+"]");
+            print("Connection established.");
             inputReader = new BufferedReader(new InputStreamReader(processSocket.getInputStream()));
             outputWriter = new PrintWriter(processSocket.getOutputStream(),true);
             
-            SuzukiKasami sk = null;
-            Raymond rd = null;
             sendMsg = "REGISTER";
             send(outputWriter, sendMsg);
             while(true){
@@ -181,13 +220,11 @@ public class Process {
                     configure();
                     
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
-                        sk = new SuzukiKasami(PID, P_LIST);
                         for(Integer pid: P_HOSTNAMES.values()){
                             Socket nb = nbSocket.accept();
                             new neighbourHandler(nb, pid, P_LIST).start();
                         }
                     }else{
-                        rd = new Raymond(PID, P_LIST);
                         if(!prop.getChildren(PID).isEmpty()){
                             for(Integer pid: prop.getChildren(PID)){
                                 Socket nb = nbSocket.accept();
@@ -199,7 +236,13 @@ public class Process {
                     sendAll(sendMsg);
                     sendMsg = "READY";
                     send(outputWriter, sendMsg);
-                    sleep();
+                    sendMsg = "REQUEST_CS="+PID+";"+seqNo;
+                    sendAll(sendMsg);
+                }
+                
+                if(recvMsg.startsWith("REQUEST_CS")){
+                    int pid = Integer.parseInt(recvMsg.split("=")[1].split(";")[0]);
+                    System.out.println(pid);
                 }
                 
             }
@@ -247,7 +290,9 @@ class neighbourHandler extends Thread{
             while(true){
                 recvMsg = inputReader.readLine();
                 print("RECEIVED="+recvMsg);
-                
+                if(recvMsg.startsWith("REQUEST_CS")){
+                    System.out.println(recvMsg.split("=")[1].split(";")[0]);
+                }
             }
         } catch (IOException ex) {
             Logger.getLogger(neighbourHandler.class.getName()).log(Level.SEVERE, null, ex);
