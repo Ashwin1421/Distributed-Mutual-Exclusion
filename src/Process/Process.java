@@ -5,12 +5,15 @@
  */
 package Process;
 
+import Message.Message;
 import MutEx.Raymond;
 import MutEx.SuzukiKasami;
 import Utilities.Utils;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
@@ -33,28 +36,31 @@ public class Process {
     //server socket to be different on different machines.
     int NB_PORT = 1400;
     int PID;
-    ServerSocket nbSocket;
-    BufferedReader inputReader;
-    PrintWriter outputWriter;
-    Socket processSocket;
+    static ServerSocket nbSocket;
+    static ObjectInputStream objin;
+    static ObjectOutputStream objout;
+    static Socket processSocket;
     String HOST;
     int PORT;
     Map<String, Integer> P_HOSTNAMES = new HashMap<>();
-    Map<PrintWriter, Integer> P_LIST = new HashMap<>();
+    Map<ObjectOutputStream, Integer> P_LIST = new HashMap<>();
     Utils prop = new Utils();
     int seqNo = 0;
+    static SuzukiKasami sk;
+    static Raymond rd;
+    
     
     public Process(String HOST, int PORT){
         this.HOST = HOST;
         this.PORT = PORT;
     }
    
-    public void print(String text){
+    public static void print(String text){
         System.out.println("["+processSocket.getInetAddress().getHostName()+"]$:"+text);
     }
-    public void sendTo(Integer pid, String msg){
+    public void sendTo(Integer pid, Message msg){
         if(pid != PID){
-            for(PrintWriter out: P_LIST.keySet()){
+            for(ObjectOutputStream out: P_LIST.keySet()){
                 if(P_LIST.get(out).equals(pid)){
                     send(out, msg);
                 }
@@ -64,37 +70,42 @@ public class Process {
         }
     }
     
-    public void send(PrintWriter out, String msg){
-        out.println(msg);
-        print("SENT="+msg);
+    public static void send(ObjectOutputStream out, Message msg){
+        try {
+            out.writeObject(msg);
+            out.flush();
+        } catch (IOException ex) {
+            Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        print("SENT="+msg.toString());
     }
     
-    public void receive(String msg) {
-        print("RECEIVED="+msg);
+    public static void receive(Message msg) {
+        print("RECEIVED="+msg.toString());
     }
     
     public void configure(){
         if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
-            if(outputWriter!=null){
-                P_LIST.put(outputWriter, 1);
+            if(objout!=null){
+                P_LIST.put(objout, 1);
             }
             for(String hostName: P_HOSTNAMES.keySet()){
                 try {
                     Socket pSocket = new Socket(hostName.substring(0, hostName.length()-1), NB_PORT+P_HOSTNAMES.get(hostName));
-                    P_LIST.put(new PrintWriter(pSocket.getOutputStream(),true),P_HOSTNAMES.get(hostName));
+                    P_LIST.put(new ObjectOutputStream(pSocket.getOutputStream()),P_HOSTNAMES.get(hostName));
                 } catch (IOException ex) {
                     Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
                 }
             }
         }else{
             for(String hostName: P_HOSTNAMES.keySet()){
-                if(hostName.substring(0, hostName.length()-1).equalsIgnoreCase("coordinator")){
-                    P_LIST.put(outputWriter, 1);
+                if(hostName.equalsIgnoreCase("coordinator")){
+                    P_LIST.put(objout, 1);
                 }
                 else{
                     try {
                         Socket pSocket = new Socket(hostName.substring(0, hostName.length()-1), NB_PORT+P_HOSTNAMES.get(hostName));
-                        P_LIST.put(new PrintWriter(pSocket.getOutputStream(), true), P_HOSTNAMES.get(hostName));
+                        P_LIST.put(new ObjectOutputStream(pSocket.getOutputStream()), P_HOSTNAMES.get(hostName));
                     } catch (IOException ex) {
                         Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
                     }
@@ -113,68 +124,32 @@ public class Process {
             Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
-    public void sendAll(String msg){
-        for(PrintWriter out: P_LIST.keySet()){
+    public void sendAll(Message msg){
+        for(ObjectOutputStream out: P_LIST.keySet()){
             send(out, msg);
         }
     }
     
-    /**
-     * Run Mutual Exclusion algorithm 
-     * (Suzuki-Kasami or Raymond's) 
-     * N times.
-     **/
-    public void simulate(int N){
-        SuzukiKasami sk = new SuzukiKasami(PID, P_LIST);
-        Raymond rd = new Raymond(PID, P_LIST);
-        for(int i=1;i<=N;i++){
-            if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
-                /**
-                 * Step:1
-                 * Sleep for some time and 
-                 * then start requesting.
-                 **/
-                sleep();
-                /**
-                 * Step:2
-                 * If a process doesn't have 
-                 * the token then request 
-                 * for the token to everyone.
-                 **/
-                if(!sk.hasToken()){
-                    sk.requestCS(PID);
-                }
-                /**
-                 * Else if the process does 
-                 * have the token then receive 
-                 * the request and deal with 
-                 * it accordingly.
-                 **/
-                else{
-                    sk.receiveCSRequest(i, seqNo);
-                }
-                //Step:3
-            }else{
-                
-            }
-        }
-    }
+    
     public void start(){
-        String sendMsg, recvMsg;
+        Message recvMsg = null, sendMsg = new Message();
         long t1 = 0, t2;
+        int N = prop.interval;
         try {
             processSocket = new Socket(HOST, PORT);
             print("Process started at ["+processSocket.getLocalSocketAddress()+"]");
             print("Connection established.");
-            inputReader = new BufferedReader(new InputStreamReader(processSocket.getInputStream()));
-            outputWriter = new PrintWriter(processSocket.getOutputStream(),true);
+            objout = new ObjectOutputStream(processSocket.getOutputStream());
+            objin = new ObjectInputStream(processSocket.getInputStream());
             
-            sendMsg = "REGISTER";
-            send(outputWriter, sendMsg);
+            
+            sendMsg.setText("REGISTER");
+            send(objout, sendMsg);
+            boolean sentReady = false;
             while(true){
-                recvMsg = inputReader.readLine();
+                recvMsg = (Message)objin.readObject();
                 receive(recvMsg);
-                if(recvMsg.startsWith("PID")){
+                if(recvMsg.getText().startsWith("PID")){
                     
                     /**
                      * This is part of the initial setup of
@@ -192,26 +167,9 @@ public class Process {
                      * will reply back with only those host names 
                      * which are neighbours of the registering process.
                      **/
-                    PID = Integer.parseInt(recvMsg.split("PID=")[1].split(";")[0]);
-                    if(recvMsg.contains("ROOT=")){
-                        for(String s: recvMsg.split("ROOT=")[1].split("/")){
-                            String hostName = s.split("[(\\,\\)]")[1];
-                            Integer pid = Integer.parseInt(s.split("[(\\,\\)]")[2]);
-                            if(pid!=PID){
-                                P_HOSTNAMES.put(hostName+pid, pid);
-                            }
-                        }
-                    } else{
-                        for(String s: recvMsg.split("PHOST=")[1].split("/")){
-                            if(!s.startsWith("coordinator")){
-                                String hostName = s.split("[(\\,\\)]")[1];
-                                Integer pid = Integer.parseInt(s.split("[(\\,\\)]")[2]);
-                                if(pid!=PID){
-                                    P_HOSTNAMES.put(hostName+pid, pid);
-                                }
-                            }
-                        }
-                    }
+                    PID = recvMsg.receivepid();
+                    sendMsg.setownpid(PID);
+                    P_HOSTNAMES = recvMsg.getHostnames();
                     
                     nbSocket = new ServerSocket(NB_PORT+PID);
                     nbSocket.setSoTimeout(1000*3600);
@@ -232,22 +190,23 @@ public class Process {
                             }
                         }
                     }
-                    sendMsg = "HELLO";
+                    sendMsg = new Message(PID);
+                    sendMsg.setText("HELLO");
                     sendAll(sendMsg);
-                    sendMsg = "READY";
-                    send(outputWriter, sendMsg);
-                    sendMsg = "REQUEST_CS="+PID+";"+seqNo;
-                    sendAll(sendMsg);
+                    sendMsg = new Message(PID);
+                    sendMsg.setText("READY");
+                    send(objout, sendMsg);
+                    sentReady = true;
+                    
                 }
                 
-                if(recvMsg.startsWith("REQUEST_CS")){
-                    int pid = Integer.parseInt(recvMsg.split("=")[1].split(";")[0]);
-                    System.out.println(pid);
-                }
+               
                 
             }
             
         } catch (IOException ex) {
+            Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (ClassNotFoundException ex) {
             Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
         }
         finally{
@@ -258,43 +217,46 @@ public class Process {
 
 class neighbourHandler extends Thread{
     Socket neighbourSocket;
-    BufferedReader inputReader;
-    PrintWriter outputWriter;
+    ObjectInputStream objin;
+    ObjectOutputStream objout;
     String HOST;
     int PORT;
     int PID;
-    Map<PrintWriter, Integer> P_LIST;
+    Map<ObjectOutputStream, Integer> P_LIST;
+    Utils prop = new Utils();
     
-    public neighbourHandler(Socket neighbourSocket, int PID, Map<PrintWriter, Integer> P_LIST){
+    public neighbourHandler(Socket neighbourSocket, int PID, Map<ObjectOutputStream, Integer> P_LIST){
         this.neighbourSocket = neighbourSocket;
         this.PID = PID;
         this.P_LIST = P_LIST;
     }
     
-    public void send(PrintWriter out,String msg){
-        out.println(msg);
-        System.out.println("SENT="+msg);
-    }
-    
-    public void print(String text){
-        System.out.println("["+neighbourSocket.getInetAddress().getHostName()+"]$:"+text);
+    public void sleep(){
+        Random rnd = new Random(System.currentTimeMillis()+PID);
+        try {
+            long t = rnd.nextInt(prop.t2-prop.t1)+1;
+            Process.print("Sleeping for "+t+" millis.");
+            Thread.sleep(t);
+        } catch (InterruptedException ex) {
+            Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
+        }
     }
     
     @Override
     public void run(){
-        String sendMsg, recvMsg;
+        Message sendMsg, recvMsg;
         try {
-            inputReader = new BufferedReader(new InputStreamReader(neighbourSocket.getInputStream()));
-            outputWriter = new PrintWriter(neighbourSocket.getOutputStream(), true);
-            
+            objin = new ObjectInputStream(neighbourSocket.getInputStream());
+            objout = new ObjectOutputStream(neighbourSocket.getOutputStream());
+            int N = prop.interval;
             while(true){
-                recvMsg = inputReader.readLine();
-                print("RECEIVED="+recvMsg);
-                if(recvMsg.startsWith("REQUEST_CS")){
-                    System.out.println(recvMsg.split("=")[1].split(";")[0]);
-                }
+                recvMsg = (Message)objin.readObject();
+                Process.receive(recvMsg);
+                
             }
         } catch (IOException ex) {
+            Logger.getLogger(neighbourHandler.class.getName()).log(Level.SEVERE, null, ex);
+        } catch (ClassNotFoundException ex) {
             Logger.getLogger(neighbourHandler.class.getName()).log(Level.SEVERE, null, ex);
         }
         
