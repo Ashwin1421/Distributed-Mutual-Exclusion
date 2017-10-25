@@ -5,6 +5,7 @@
  */
 package Coordinator;
 
+import MutEx.Raymond;
 import Utilities.Utils;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -19,7 +20,12 @@ import java.util.Properties;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import MutEx.SuzukiKasami;
+import java.util.LinkedList;
+import java.util.Queue;
 import java.util.Random;
+import Message.Message;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 
 /**
  *
@@ -67,11 +73,18 @@ public class Coordinator {
 
 class processHandler extends Thread{
     Socket processSocket;
+    ObjectInputStream objin;
+    ObjectOutputStream objout;
     BufferedReader inputReader;
     PrintWriter outputWriter;
     Map<Socket, Integer> PROCESS_IDS;
-    static Map<PrintWriter, Integer> PROCESS_LIST = new HashMap<>();
+    static Map<ObjectOutputStream, Integer> PROCESS_LIST = new HashMap<>();
     Utils prop = new Utils();
+    int PID = 1;
+    static SuzukiKasami sk;
+    static Raymond rd;
+    Message sendMsg = new Message(PID);
+    Map<String, Integer> hostNames = new HashMap<>();
     
     public processHandler(Socket processSocket, Map<Socket, Integer> PROCESS_IDS){
         this.processSocket = processSocket;
@@ -81,24 +94,22 @@ class processHandler extends Thread{
     public void print(String text){
         System.out.println("["+prop.Coordinator+"]$:"+text);
     }
-    public void send(PrintWriter out, String msg){
-        out.println(msg);
+    
+    public void send(ObjectOutputStream out, Message msg){
+        try {
+            out.writeObject(msg);
+            out.flush();
+        } catch (IOException ex) {
+            Logger.getLogger(processHandler.class.getName()).log(Level.SEVERE, null, ex);
+        }
         print("SENT="+msg);
     }
     
-    public void receive(String msg){
-        print("RECEIVED="+msg);
+    public void receive(Message msg){
+        print("RECEIVED="+msg.toString());
     }
     
-    public void configure(){
-        for(Socket p: PROCESS_IDS.keySet()){
-            try {
-                PROCESS_LIST.put(new PrintWriter(p.getOutputStream(), true), PROCESS_IDS.get(p));
-            } catch (IOException ex) {
-                Logger.getLogger(processHandler.class.getName()).log(Level.SEVERE, null, ex);
-            }
-        }
-    }
+    
     public Socket getProcessSocket(Integer id){
         for(Socket p: PROCESS_IDS.keySet()){
             if(PROCESS_IDS.get(p).equals(id)){
@@ -122,73 +133,88 @@ class processHandler extends Thread{
         /**
          * Constructing a message with process id.
          **/
-        String pid_msg = "PID=";
-        String nb_msg = "PHOST=";
-        String root_msg = "ROOT=";
+        String pid_msg = "PID";
+        String nb_msg = "PHOST";
+        String root_msg = "ROOT";
         if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
             for(Socket p: PROCESS_IDS.keySet()){
-                nb_msg += "("+p.getInetAddress().getHostName()+","+PROCESS_IDS.get(p)+")"+"/";
+                hostNames.put(p.getInetAddress().getHostName()+PROCESS_IDS.get(p), PROCESS_IDS.get(p));
             }
-            for(PrintWriter out: PROCESS_LIST.keySet()){
-                send(out, pid_msg+PROCESS_LIST.get(out)+";"+nb_msg);
+            for(ObjectOutputStream out: PROCESS_LIST.keySet()){
+                
+                sendMsg.addMap(hostNames);
+                sendMsg.addPID(PROCESS_LIST.get(out));
+                sendMsg.setText("PID");
+                send(out, sendMsg);
+
             }
         } else{
             for(Socket process : PROCESS_IDS.keySet()){
+                sendMsg.setText("PID");
+                sendMsg.addPID(PROCESS_IDS.get(process));
                 Integer id = prop.getParent(PROCESS_IDS.get(process));
-                for(PrintWriter out: PROCESS_LIST.keySet()){
+                for(ObjectOutputStream out: PROCESS_LIST.keySet()){
                     if(PROCESS_IDS.get(process).equals(PROCESS_LIST.get(out))){
                         if(id!=null){
                             if(id == 1){
-                                root_msg += "("+"coordinator"+","+id+")"+"/";
-                                send(out, pid_msg+PROCESS_LIST.get(out)+";"+root_msg);
-                                root_msg = "ROOT=";
-                            }else{
-                                root_msg += "("+getProcessSocket(id).getInetAddress().getHostName()+","+id+")"+"/";
-                                send(out, pid_msg+PROCESS_LIST.get(out)+";"+root_msg);
-                                root_msg = "ROOT=";
+                                hostNames.put("coordinator", id);
+                                sendMsg.addMap(hostNames);
+                                send(out, sendMsg);
+                                hostNames.remove("coordinator", id);
+                            }
+                            else{
+                                hostNames.put(getProcessSocket(id).getInetAddress().getHostName()+id, id);
+                                sendMsg.addMap(hostNames);
+                                send(out, sendMsg);
+                                hostNames.remove(getProcessSocket(id).getInetAddress().getHostName()+id, id);
                             }
                         }
                     }
                 }
+                
             }
-        }
+            
         
+        }
     }
     
     @Override
     public void run(){
-        String sendMsg, recvMsg;
+        Message recvMsg;
         try {
+            objout = new ObjectOutputStream(processSocket.getOutputStream());
+            objin = new ObjectInputStream(processSocket.getInputStream());
             
-            inputReader = new BufferedReader(new InputStreamReader(processSocket.getInputStream()));
-            outputWriter = new PrintWriter(processSocket.getOutputStream(), true);
             System.out.println("Connected to ["+processSocket.getRemoteSocketAddress()+"].");
             
             
-            
+            int N = prop.interval;
             while(true){
-                recvMsg = inputReader.readLine();
+                recvMsg = (Message)objin.readObject();
                 receive(recvMsg);
-
-                
-                if(recvMsg.startsWith("REGISTER")){
+                if(recvMsg.getText().equalsIgnoreCase("REGISTER")){
+                    if(PROCESS_IDS.containsKey(processSocket)){
+                        PROCESS_LIST.put(objout, PROCESS_IDS.get(processSocket));
+                    }
                     if(PROCESS_IDS.size() == (prop.N-1)){
-                        configure();
+                        //configure();
                         sendAll();
                     }
                 }
                 
-                if(recvMsg.startsWith("READY")){
+                if(recvMsg.getText().equalsIgnoreCase("READY")){
                     Coordinator.ready_count++;
                     if(Coordinator.ready_count == (prop.N-1)){
                         sleep();
                     }
                 }
-                
+               
             }
         } catch (IOException ex) {
             Logger.getLogger(processHandler.class.getName()).log(Level.SEVERE, null, ex);
-        }
+        } catch (ClassNotFoundException ex) {
+            Logger.getLogger(processHandler.class.getName()).log(Level.SEVERE, null, ex);
+        } 
         finally{
             System.exit(0);
         }
