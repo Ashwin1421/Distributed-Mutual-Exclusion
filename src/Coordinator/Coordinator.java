@@ -7,21 +7,14 @@ package Coordinator;
 
 import MutEx.Raymond;
 import Utilities.Utils;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Properties;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import MutEx.SuzukiKasami;
-import java.util.LinkedList;
-import java.util.Queue;
 import java.util.Random;
 import Message.Message;
 import java.io.ObjectInputStream;
@@ -53,11 +46,11 @@ public class Coordinator {
         try {
             coordinatorSocket = new ServerSocket(this.PORT);
             PROCESS_ID = PROC_ID;
-            System.out.println("Coordinator started at ["+coordinatorSocket.getInetAddress()+"].");
+            System.out.println("Coordinator started at ["+coordinatorSocket.getInetAddress()+":"+coordinatorSocket.getLocalPort()+"].");
             coordinatorSocket.setSoTimeout(1000*60*60);
             coordinatorSocket.setReuseAddress(true);
             
-            while(true){
+            while(true && PROCESS_ID<=prop.N){
                 processSocket = coordinatorSocket.accept();
                 PROCESS_ID++;
                 PROC_IDS.put(processSocket,PROCESS_ID);
@@ -75,8 +68,6 @@ class processHandler extends Thread{
     Socket processSocket;
     ObjectInputStream objin;
     ObjectOutputStream objout;
-    BufferedReader inputReader;
-    PrintWriter outputWriter;
     Map<Socket, Integer> PROCESS_IDS;
     static Map<ObjectOutputStream, Integer> PROCESS_LIST = new HashMap<>();
     Utils prop = new Utils();
@@ -85,6 +76,10 @@ class processHandler extends Thread{
     static Raymond rd;
     Message sendMsg = new Message(PID);
     Map<String, Integer> hostNames = new HashMap<>();
+    public static int releaseMsgCount = 0;
+    public static int requestCount = 0;
+    public static boolean released = false;
+    static boolean startComp = false;
     
     public processHandler(Socket processSocket, Map<Socket, Integer> PROCESS_IDS){
         this.processSocket = processSocket;
@@ -123,7 +118,7 @@ class processHandler extends Thread{
         Random rnd = new Random(System.currentTimeMillis()+1);
         try {
             long t = rnd.nextInt(prop.t2-prop.t1)+1;
-            print("Sleeping for "+t+" millis.");
+            print("Sleeping for "+t+" ms.");
             Thread.sleep(t);
         } catch (InterruptedException ex) {
             Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
@@ -133,9 +128,7 @@ class processHandler extends Thread{
         /**
          * Constructing a message with process id.
          **/
-        String pid_msg = "PID";
-        String nb_msg = "PHOST";
-        String root_msg = "ROOT";
+        
         if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
             for(Socket p: PROCESS_IDS.keySet()){
                 hostNames.put(p.getInetAddress().getHostName()+PROCESS_IDS.get(p), PROCESS_IDS.get(p));
@@ -158,15 +151,35 @@ class processHandler extends Thread{
                         if(id!=null){
                             if(id == 1){
                                 hostNames.put("coordinator", id);
+                                if(!prop.getChildren(PROCESS_IDS.get(process)).isEmpty()){
+                                    for(Integer c: prop.getChildren(PROCESS_IDS.get(process))){
+                                        hostNames.put(getProcessSocket(c).getInetAddress().getHostName()+c, c);
+                                    }
+                                }
                                 sendMsg.addMap(hostNames);
                                 send(out, sendMsg);
                                 hostNames.remove("coordinator", id);
+                                if(!prop.getChildren(PROCESS_IDS.get(process)).isEmpty()){
+                                    for(Integer c: prop.getChildren(PROCESS_IDS.get(process))){
+                                        hostNames.remove(getProcessSocket(c).getInetAddress().getHostName()+c, c);
+                                    }
+                                }
                             }
                             else{
                                 hostNames.put(getProcessSocket(id).getInetAddress().getHostName()+id, id);
+                                if(!prop.getChildren(PROCESS_IDS.get(process)).isEmpty()){
+                                    for(Integer c: prop.getChildren(PROCESS_IDS.get(process))){
+                                        hostNames.put(getProcessSocket(c).getInetAddress().getHostName()+c, c);
+                                    }
+                                }
                                 sendMsg.addMap(hostNames);
                                 send(out, sendMsg);
                                 hostNames.remove(getProcessSocket(id).getInetAddress().getHostName()+id, id);
+                                if(!prop.getChildren(PROCESS_IDS.get(process)).isEmpty()){
+                                    for(Integer c: prop.getChildren(PROCESS_IDS.get(process))){
+                                        hostNames.remove(getProcessSocket(c).getInetAddress().getHostName()+c, c);
+                                    }
+                                }
                             }
                         }
                     }
@@ -178,6 +191,7 @@ class processHandler extends Thread{
         }
     }
     
+
     @Override
     public void run(){
         Message recvMsg;
@@ -195,6 +209,8 @@ class processHandler extends Thread{
                 if(recvMsg.getText().equalsIgnoreCase("REGISTER")){
                     if(PROCESS_IDS.containsKey(processSocket)){
                         PROCESS_LIST.put(objout, PROCESS_IDS.get(processSocket));
+                        rd = new Raymond(PID, PROCESS_LIST);
+                        sk = new SuzukiKasami(PID, PROCESS_LIST);
                     }
                     if(PROCESS_IDS.size() == (prop.N-1)){
                         //configure();
@@ -202,22 +218,62 @@ class processHandler extends Thread{
                     }
                 }
                 
+
                 if(recvMsg.getText().equalsIgnoreCase("READY")){
                     Coordinator.ready_count++;
                     if(Coordinator.ready_count == (prop.N-1)){
-                        sleep();
+                        print("All processes ready to start computation.");
+                        for(ObjectOutputStream out: PROCESS_LIST.keySet()){
+                            sendMsg = new Message(PID);
+                            sendMsg.setText("START");
+                            send(out, sendMsg);
+                        }
+                        startComp = true;
                     }
                 }
-               
+                
+                if(startComp){
+                    if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        sk.requestCS(PID);
+                    }else{
+                        if(rd.isUsing()){
+                            rd.executeCS();
+                        }else{
+                            rd.requestCS(PID);
+                        }
+                    }
+                }
+                if(recvMsg.getText().equalsIgnoreCase("REQUEST")){
+                    if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        sk.receiveCSRequest(recvMsg.getPid(), recvMsg.getseqno());
+                    }else{
+                        rd.receiveCSRequest(recvMsg.getPid());
+                    }
+                }
+                
+                if(recvMsg.getText().equalsIgnoreCase("PRIVILEGE")){
+                    
+                    if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        sk.setToken(true);
+                        sk.executeCS();
+                        sk.releaseCS(PID);
+                    }else{
+                        if(rd.nextRequest()!=null){
+                            if(rd.nextRequest()==PID){
+                                rd.executeCS();
+                                rd.removeRequest(PID);
+                            }
+                            if(rd.nextRequest()!=null){
+                                rd.grantToken(rd.nextRequest());
+                            }
+                        }
+                    } 
+                }
             }
         } catch (IOException ex) {
-            Logger.getLogger(processHandler.class.getName()).log(Level.SEVERE, null, ex);
+            //Logger.getLogger(processHandler.class.getName()).log(Level.SEVERE, null, ex);
         } catch (ClassNotFoundException ex) {
-            Logger.getLogger(processHandler.class.getName()).log(Level.SEVERE, null, ex);
-        } 
-        finally{
-            System.exit(0);
+            //Logger.getLogger(processHandler.class.getName()).log(Level.SEVERE, null, ex);
         }
-        
     }
 }
