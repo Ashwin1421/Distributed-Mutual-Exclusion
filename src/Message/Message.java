@@ -7,6 +7,7 @@ package Message;
 
 import java.io.Serializable;
 import java.util.Map;
+import java.util.Queue;
 
 /**
  *
@@ -15,11 +16,11 @@ import java.util.Map;
 public class Message implements Serializable{
     String text=null;
     Integer pid=null;
-    Integer seqno=null;
     Map<String, Integer> hostNames;
     Integer sendpid= null;
-    
-    public Message(){}
+    Integer seqNo;
+    Queue<Integer> Q;
+    Integer[] LN;
     
     public Message(Integer pid){
         this.pid = pid;
@@ -37,23 +38,15 @@ public class Message implements Serializable{
         this.pid = pid;
     }
     
-    public Integer getownpid(){
+    public Integer getPid(){
         return pid;
-    }
-    
-    public void setseqno(Integer seqno){
-        this.seqno = seqno;
-    }
-    
-    public Integer getseqno() {
-        return seqno;
     }
     
     public void addPID(Integer pid){
         this.sendpid = pid;
     }
     
-    public void addMap(Map map){
+    public void addMap(Map<String, Integer> map){
         this.hostNames = map;
     }
     
@@ -65,8 +58,31 @@ public class Message implements Serializable{
         return hostNames;
     }
     
+    public void setseqno(Integer seqNo){
+        this.seqNo = seqNo;
+    }
+    
+    public Integer getseqno(){
+        return seqNo;
+    }
+    
+    public void setQ(Queue<Integer> Q){
+        this.Q = Q;
+    }
+    
+    public Queue<Integer> getQ(){
+        return Q;
+    }
+    
+    public void setLN(Integer[] LN){
+        this.LN = LN;
+    }
+    
+    public Integer[] getLN() {
+        return LN;
+    }
     @Override
     public String toString(){
-        return "TEXT="+text+",PID="+pid+",SEQ="+seqno;
+        return "Text="+text+",pid="+pid;
     }
 }
