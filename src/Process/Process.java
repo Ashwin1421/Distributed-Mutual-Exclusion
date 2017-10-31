@@ -9,20 +9,13 @@ import Message.Message;
 import MutEx.Raymond;
 import MutEx.SuzukiKasami;
 import Utilities.Utils;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.io.OutputStream;
-import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.AbstractMap.SimpleEntry;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Random;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -46,18 +39,22 @@ public class Process {
     Map<ObjectOutputStream, Integer> P_LIST = new HashMap<>();
     Utils prop = new Utils();
     int seqNo = 0;
-    static SuzukiKasami sk;
-    static Raymond rd;
-    
+    public static SuzukiKasami sk;
+    public static Raymond rd;
+    public static boolean sentReady = false;
+    public static int releaseCount = 0;
+    public static int requestCount = 0;
+    Message sendMsg = new Message(null);
     
     public Process(String HOST, int PORT){
         this.HOST = HOST;
         this.PORT = PORT;
     }
    
-    public static void print(String text){
-        System.out.println("["+processSocket.getInetAddress().getHostName()+"]$:"+text);
+    public void print(String text){
+        System.out.println("["+processSocket.getLocalSocketAddress()+"]$:"+text);
     }
+    
     public void sendTo(Integer pid, Message msg){
         if(pid != PID){
             for(ObjectOutputStream out: P_LIST.keySet()){
@@ -70,17 +67,18 @@ public class Process {
         }
     }
     
-    public static void send(ObjectOutputStream out, Message msg){
+    public void send(ObjectOutputStream out, Message msg){
         try {
             out.writeObject(msg);
             out.flush();
+            
         } catch (IOException ex) {
             Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
         }
         print("SENT="+msg.toString());
     }
     
-    public static void receive(Message msg) {
+    public void receive(Message msg) {
         print("RECEIVED="+msg.toString());
     }
     
@@ -118,7 +116,7 @@ public class Process {
         Random rnd = new Random(System.currentTimeMillis()+PID);
         try {
             long t = rnd.nextInt(prop.t2-prop.t1)+1;
-            print("Sleeping for "+t+" millis.");
+            print("Sleeping for "+t+" ms.");
             Thread.sleep(t);
         } catch (InterruptedException ex) {
             Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
@@ -126,15 +124,17 @@ public class Process {
     }
     public void sendAll(Message msg){
         for(ObjectOutputStream out: P_LIST.keySet()){
-            send(out, msg);
+            if(!P_LIST.get(out).equals(PID) && !P_LIST.get(out).equals(1)){
+                send(out, msg);
+            }
         }
     }
     
-    
+
     public void start(){
-        Message recvMsg = null, sendMsg = new Message();
-        long t1 = 0, t2;
         int N = prop.interval;
+        boolean released = false;
+
         try {
             processSocket = new Socket(HOST, PORT);
             print("Process started at ["+processSocket.getLocalSocketAddress()+"]");
@@ -145,9 +145,9 @@ public class Process {
             
             sendMsg.setText("REGISTER");
             send(objout, sendMsg);
-            boolean sentReady = false;
+
             while(true){
-                recvMsg = (Message)objin.readObject();
+                Message recvMsg = (Message)objin.readObject();
                 receive(recvMsg);
                 if(recvMsg.getText().startsWith("PID")){
                     
@@ -176,7 +176,11 @@ public class Process {
                     nbSocket.setReuseAddress(true);
                     print("Listening on PORT="+(NB_PORT+PID));
                     configure();
-                    
+                    if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        sk = new SuzukiKasami(PID, P_LIST);
+                    }else{
+                        rd = new Raymond(PID, P_LIST);
+                    }
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
                         for(Integer pid: P_HOSTNAMES.values()){
                             Socket nb = nbSocket.accept();
@@ -186,31 +190,65 @@ public class Process {
                         if(!prop.getChildren(PID).isEmpty()){
                             for(Integer pid: prop.getChildren(PID)){
                                 Socket nb = nbSocket.accept();
-                                new neighbourHandler(nb, pid, P_LIST).start();
+                                new neighbourHandler(nb, PID, P_LIST).start();
                             }
+                            
+                        }
+                        if(prop.getParent(PID)!=null && prop.getParent(PID)!=1){
+                            Socket nb = nbSocket.accept();
+                            new neighbourHandler(nb, PID, P_LIST).start();
                         }
                     }
-                    sendMsg = new Message(PID);
-                    sendMsg.setText("HELLO");
-                    sendAll(sendMsg);
                     sendMsg = new Message(PID);
                     sendMsg.setText("READY");
                     send(objout, sendMsg);
                     sentReady = true;
-                    
+                }
+                //simulate(N, recvMsg, released);
+                if(recvMsg.getText().equalsIgnoreCase("START") && sentReady){
+                    sleep();
+                    if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        sk.requestCS(PID);
+                    }else{
+                        rd.requestCS(PID);
+                    }
                 }
                 
-               
+                if(recvMsg.getText().equalsIgnoreCase("REQUEST")){
+                    if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        sk.receiveCSRequest(recvMsg.getPid(), recvMsg.getseqno());
+                    }else{
+                        rd.receiveCSRequest(recvMsg.getPid());
+                    }
+                }
                 
+                if(recvMsg.getText().equalsIgnoreCase("PRIVILEGE")){
+                    if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        sk.setToken(true);
+                        sk.executeCS();
+                        sk.releaseCS(PID);
+                    }else{
+                        if(rd.nextRequest()!=null){
+                            if(rd.nextRequest() == PID){
+                                rd.executeCS();
+                                rd.removeRequest(PID);
+                            }
+                            if(rd.nextRequest()!=null){
+                                rd.grantToken(rd.nextRequest());
+                            }
+                            if(rd.nextRequest()!=null){
+                                rd.sendRequest(rd.getHolder());
+                            }
+                        }
+                        rd.requestCS(PID);
+                    }
+                }
             }
             
         } catch (IOException ex) {
-            Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
+            //Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
         } catch (ClassNotFoundException ex) {
-            Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
-        }
-        finally{
-            System.exit(0);
+            //Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
 }
@@ -224,6 +262,8 @@ class neighbourHandler extends Thread{
     int PID;
     Map<ObjectOutputStream, Integer> P_LIST;
     Utils prop = new Utils();
+    public static int releaseCount = 0;
+    public static int requestCount = 0;
     
     public neighbourHandler(Socket neighbourSocket, int PID, Map<ObjectOutputStream, Integer> P_LIST){
         this.neighbourSocket = neighbourSocket;
@@ -231,34 +271,72 @@ class neighbourHandler extends Thread{
         this.P_LIST = P_LIST;
     }
     
+    public void print(String txt){
+        System.out.println("["+neighbourSocket.getRemoteSocketAddress()+"]$:"+txt);
+    }
+    
+    public void receive(Message msg){
+        print("RECEIVED="+msg.toString());
+    }
+    
     public void sleep(){
         Random rnd = new Random(System.currentTimeMillis()+PID);
         try {
             long t = rnd.nextInt(prop.t2-prop.t1)+1;
-            Process.print("Sleeping for "+t+" millis.");
+            print("Sleeping for "+t+" ms.");
             Thread.sleep(t);
         } catch (InterruptedException ex) {
             Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
-    
+
     @Override
     public void run(){
-        Message sendMsg, recvMsg;
+        synchronized(this){
+        boolean released = false;
         try {
             objin = new ObjectInputStream(neighbourSocket.getInputStream());
-            objout = new ObjectOutputStream(neighbourSocket.getOutputStream());
             int N = prop.interval;
             while(true){
-                recvMsg = (Message)objin.readObject();
-                Process.receive(recvMsg);
                 
+                Message recvMsg = (Message)objin.readObject();
+                receive(recvMsg);
+                if(recvMsg.getText().equalsIgnoreCase("REQUEST")){
+                    if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        Process.sk.receiveCSRequest(recvMsg.getPid(), recvMsg.getseqno());
+                    }else{
+                        Process.rd.receiveCSRequest(recvMsg.getPid());
+                    }
+                }
+                
+                if(recvMsg.getText().equalsIgnoreCase("PRIVILEGE")){
+                    if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        Process.sk.setToken(true);
+                        Process.sk.executeCS();
+                        Process.sk.releaseCS(PID);
+                    }else{
+                        if(Process.rd.nextRequest()!=null){
+                            if(Process.rd.nextRequest() == PID){
+                                Process.rd.executeCS();
+                                Process.rd.removeRequest(PID);
+                            }
+                            if(Process.rd.nextRequest()!=null){
+                                Process.rd.grantToken(Process.rd.nextRequest());
+                            }
+                            if(Process.rd.nextRequest()!=null){
+                                Process.rd.sendRequest(Process.rd.getHolder());
+                            }
+                        }
+                        Process.rd.requestCS(PID);
+                        
+                    }
+                }
             }
         } catch (IOException ex) {
-            Logger.getLogger(neighbourHandler.class.getName()).log(Level.SEVERE, null, ex);
+            //Logger.getLogger(neighbourHandler.class.getName()).log(Level.SEVERE, null, ex);
         } catch (ClassNotFoundException ex) {
-            Logger.getLogger(neighbourHandler.class.getName()).log(Level.SEVERE, null, ex);
+            //Logger.getLogger(neighbourHandler.class.getName()).log(Level.SEVERE, null, ex);
         }
-        
+        }
     }
 }
