@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.Properties;
 import java.util.Queue;
+import java.util.Random;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -27,6 +28,7 @@ public class Utils {
     public int t1;
     public int t2;
     public int t3;
+    public int interval;
     
     public Utils(){
         configInput = getClass().getClassLoader().getResourceAsStream("config.properties");
@@ -43,7 +45,7 @@ public class Utils {
             this.t2 = Integer.parseInt(config.getProperty("t2"));
             this.t3 = Integer.parseInt(config.getProperty("t3"));
             this.Algorithm = config.getProperty("algorithm");
-            
+            this.interval = Integer.parseInt(config.getProperty("interval"));
         }else{
             System.out.println("Config File doesn't exist!");
         }
