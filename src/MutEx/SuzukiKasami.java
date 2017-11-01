@@ -39,12 +39,12 @@ public class SuzukiKasami {
     
     public SuzukiKasami(int pid, Map<ObjectOutputStream, Integer> PROCESS_LIST){
         this.PROCESS_LIST = PROCESS_LIST;
-        this.N = PROCESS_LIST.size();
+        this.N = prop.N;
         this.pid = pid;
-        this.RN = new Integer[N+2];
-        this.LN = new Integer[N+2];
-        Arrays.fill(RN, 0);
-        Arrays.fill(LN, 0);
+        this.RN = new Integer[N+1];
+        this.LN = new Integer[N+1];
+        Arrays.fill(RN, -1);
+        Arrays.fill(LN, -1);
         if(pid == 1){
             token = true;
         }
@@ -93,6 +93,10 @@ public class SuzukiKasami {
     
     public Integer nextRequest(){
         return REQUEST_Q.peek();
+    }
+    
+    public Integer getCurrentExecCount(){
+        return executionCount;
     }
     
     public void setToken(boolean token){
