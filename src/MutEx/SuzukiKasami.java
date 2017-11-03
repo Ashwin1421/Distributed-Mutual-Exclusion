@@ -9,12 +9,12 @@ import Message.Message;
 import Utilities.Utils;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
-import java.io.PrintWriter;
+import java.io.Serializable;
 import java.util.Arrays;
-import java.util.LinkedList;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -22,10 +22,9 @@ import java.util.logging.Logger;
  *
  * @author Ashwin
  */
-public class SuzukiKasami {
+public class SuzukiKasami implements Serializable{
     Integer[] RN;
     Integer[] LN;
-    int N;
     int pid;
     boolean token = false;
     boolean insideCS = false;
@@ -34,15 +33,14 @@ public class SuzukiKasami {
     long t1 = 0;
     long t2 = 0;
     Map<ObjectOutputStream, Integer> PROCESS_LIST;
-    Queue<Integer> REQUEST_Q = new LinkedList<>();
+    Queue<Integer> REQUEST_Q = new ConcurrentLinkedQueue<>();
     Utils prop = new Utils();
     
     public SuzukiKasami(int pid, Map<ObjectOutputStream, Integer> PROCESS_LIST){
         this.PROCESS_LIST = PROCESS_LIST;
-        this.N = prop.N;
         this.pid = pid;
-        this.RN = new Integer[N+1];
-        this.LN = new Integer[N+1];
+        this.RN = new Integer[prop.N+1];
+        this.LN = new Integer[prop.N+1];
         Arrays.fill(RN, -1);
         Arrays.fill(LN, -1);
         if(pid == 1){
@@ -51,7 +49,7 @@ public class SuzukiKasami {
     }
     
     public void print(String s){
-        System.out.println("[Suzuki-Kasami-MutEx]$:"+s);
+        System.out.println("[MutEx]$:"+s);
     }
     public boolean hasToken(){
         return token;

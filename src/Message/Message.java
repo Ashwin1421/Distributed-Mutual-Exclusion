@@ -16,8 +16,10 @@ import java.util.Queue;
 public class Message implements Serializable{
     String text=null;
     Integer pid=null;
+    //Intial setup data structures.
     Map<String, Integer> hostNames;
     Integer sendpid= null;
+    //Suzuki-Kasami data structures.
     Integer seqNo;
     Queue<Integer> Q;
     Integer[] LN;

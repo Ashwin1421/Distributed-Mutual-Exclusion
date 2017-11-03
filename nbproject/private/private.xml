@@ -5,7 +5,8 @@
         <group>
             <file>file:/C:/Users/Ashwin/Desktop/UTD%20MS%20CS/Fall%202017/AOS/Project-2/Distributed_Mutual_Exclusion/src/Coordinator/Coordinator.java</file>
             <file>file:/C:/Users/Ashwin/Desktop/UTD%20MS%20CS/Fall%202017/AOS/Project-2/Distributed_Mutual_Exclusion/src/MutEx/Raymond.java</file>
-            <file>file:/C:/Users/Ashwin/Desktop/UTD%20MS%20CS/Fall%202017/AOS/Project-2/Distributed_Mutual_Exclusion/src/Utilities/Utils.java</file>
+            <file>file:/C:/Users/Ashwin/Desktop/UTD%20MS%20CS/Fall%202017/AOS/Project-2/Distributed_Mutual_Exclusion/src/MutEx/SuzukiKasami.java</file>
+            <file>file:/C:/Users/Ashwin/Desktop/UTD%20MS%20CS/Fall%202017/AOS/Project-2/Distributed_Mutual_Exclusion/src/Message/Message.java</file>
             <file>file:/C:/Users/Ashwin/Desktop/UTD%20MS%20CS/Fall%202017/AOS/Project-2/Distributed_Mutual_Exclusion/src/Process/Process.java</file>
             <file>file:/C:/Users/Ashwin/Desktop/UTD%20MS%20CS/Fall%202017/AOS/Project-2/Distributed_Mutual_Exclusion/src/config.properties</file>
         </group>

@@ -52,7 +52,11 @@ public class Process {
     }
    
     public void print(String text){
-        System.out.println("["+processSocket.getLocalSocketAddress()+"]$:"+text);
+        if(PID==0){
+            System.out.println("[p]$:"+text);
+        }else{
+            System.out.println("[p"+PID+"]$:"+text);
+        }
     }
     
     public void sendTo(Integer pid, Message msg){
@@ -89,7 +93,7 @@ public class Process {
             }
             for(String hostName: P_HOSTNAMES.keySet()){
                 try {
-                    Socket pSocket = new Socket(hostName.substring(0, hostName.length()-1), NB_PORT+P_HOSTNAMES.get(hostName));
+                    Socket pSocket = new Socket(hostName.split("\\d*$")[0], NB_PORT+P_HOSTNAMES.get(hostName));
                     P_LIST.put(new ObjectOutputStream(pSocket.getOutputStream()),P_HOSTNAMES.get(hostName));
                 } catch (IOException ex) {
                     Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
@@ -102,7 +106,7 @@ public class Process {
                 }
                 else{
                     try {
-                        Socket pSocket = new Socket(hostName.substring(0, hostName.length()-1), NB_PORT+P_HOSTNAMES.get(hostName));
+                        Socket pSocket = new Socket(hostName.split("\\d*$")[0], NB_PORT+P_HOSTNAMES.get(hostName));
                         P_LIST.put(new ObjectOutputStream(pSocket.getOutputStream()), P_HOSTNAMES.get(hostName));
                     } catch (IOException ex) {
                         Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
@@ -131,10 +135,11 @@ public class Process {
     }
     
 
-    public void start(){
+    public void  start(){
         int N = prop.interval;
         boolean released = false;
 
+        synchronized(this){
         try {
             processSocket = new Socket(HOST, PORT);
             print("Process started at ["+processSocket.getLocalSocketAddress()+"]");
@@ -148,7 +153,7 @@ public class Process {
 
             while(true){
                 Message recvMsg = (Message)objin.readObject();
-                receive(recvMsg);
+                
                 if(recvMsg.getText().startsWith("PID")){
                     
                     /**
@@ -167,6 +172,7 @@ public class Process {
                      * will reply back with only those host names 
                      * which are neighbours of the registering process.
                      **/
+                    receive(recvMsg);
                     PID = recvMsg.receivepid();
                     sendMsg.setownpid(PID);
                     P_HOSTNAMES = recvMsg.getHostnames();
@@ -184,7 +190,7 @@ public class Process {
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
                         for(Integer pid: P_HOSTNAMES.values()){
                             Socket nb = nbSocket.accept();
-                            new neighbourHandler(nb, pid, P_LIST).start();
+                            new neighbourHandler(nb, PID, P_LIST).start();
                         }
                     }else{
                         if(!prop.getChildren(PID).isEmpty()){
@@ -206,6 +212,7 @@ public class Process {
                 }
                 //simulate(N, recvMsg, released);
                 if(recvMsg.getText().equalsIgnoreCase("START") && sentReady){
+                    receive(recvMsg);
                     sleep();
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
                         sk.requestCS(PID);
@@ -214,7 +221,9 @@ public class Process {
                     }
                 }
                 
+                
                 if(recvMsg.getText().equalsIgnoreCase("REQUEST")){
+                    receive(recvMsg);
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
                         sk.receiveCSRequest(recvMsg.getPid(), recvMsg.getseqno());
                     }else{
@@ -223,32 +232,44 @@ public class Process {
                 }
                 
                 if(recvMsg.getText().equalsIgnoreCase("PRIVILEGE")){
+                    receive(recvMsg);
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
                         sk.setToken(true);
                         sk.executeCS();
                         sk.releaseCS(PID);
                     }else{
-                        if(rd.nextRequest()!=null){
-                            if(rd.nextRequest() == PID){
-                                rd.executeCS();
-                                rd.removeRequest(PID);
-                            }
-                            if(rd.nextRequest()!=null){
-                                rd.grantToken(rd.nextRequest());
-                            }
-                            if(rd.nextRequest()!=null){
-                                rd.sendRequest(rd.getHolder());
-                            }
-                        }
+                        rd.setToken();
+                        rd.assignPrivilege();
+                    }
+                }
+                if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                    if(sk.getCurrentExecCount() <= N && sk.getCurrentExecCount()>=2){
+                        sk.requestCS(PID);
+                    }
+                }else{
+                    if(rd.getCurrentExecCount() <= N && rd.getCurrentExecCount()>=2){
+                        sleep();
                         rd.requestCS(PID);
                     }
                 }
+
+                if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                    if(sk.getCurrentExecCount() == (N+1)){
+                        print("Completed");
+                    }
+                }else{
+                    if(rd.getCurrentExecCount() == (N+1)){
+                        print("Completed.");
+                        
+                    }
+                }
             }
-            
+        
         } catch (IOException ex) {
             //Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
         } catch (ClassNotFoundException ex) {
             //Logger.getLogger(Process.class.getName()).log(Level.SEVERE, null, ex);
+        }
         }
     }
 }
@@ -272,7 +293,7 @@ class neighbourHandler extends Thread{
     }
     
     public void print(String txt){
-        System.out.println("["+neighbourSocket.getRemoteSocketAddress()+"]$:"+txt);
+        System.out.println("[p"+PID+"]$:"+txt);
     }
     
     public void receive(Message msg){
@@ -301,6 +322,7 @@ class neighbourHandler extends Thread{
                 
                 Message recvMsg = (Message)objin.readObject();
                 receive(recvMsg);
+                //Accepting a request.
                 if(recvMsg.getText().equalsIgnoreCase("REQUEST")){
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
                         Process.sk.receiveCSRequest(recvMsg.getPid(), recvMsg.getseqno());
@@ -309,26 +331,37 @@ class neighbourHandler extends Thread{
                     }
                 }
                 
+                //Accepting Token and assigning it.
                 if(recvMsg.getText().equalsIgnoreCase("PRIVILEGE")){
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
                         Process.sk.setToken(true);
                         Process.sk.executeCS();
                         Process.sk.releaseCS(PID);
                     }else{
-                        if(Process.rd.nextRequest()!=null){
-                            if(Process.rd.nextRequest() == PID){
-                                Process.rd.executeCS();
-                                Process.rd.removeRequest(PID);
-                            }
-                            if(Process.rd.nextRequest()!=null){
-                                Process.rd.grantToken(Process.rd.nextRequest());
-                            }
-                            if(Process.rd.nextRequest()!=null){
-                                Process.rd.sendRequest(Process.rd.getHolder());
-                            }
-                        }
-                        Process.rd.requestCS(PID);
+                        Process.rd.setToken();
+                        Process.rd.assignPrivilege();
                         
+                    }
+                }
+                
+                if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                    if(Process.sk.getCurrentExecCount() <= N && Process.sk.getCurrentExecCount()>=2){
+                        Process.sk.requestCS(PID);
+                    }
+                }else{
+                    if(Process.rd.getCurrentExecCount() <= N && Process.rd.getCurrentExecCount()>=2){
+                        sleep();
+                        Process.rd.requestCS(PID);
+                    }
+                }
+
+                if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                    if(Process.sk.getCurrentExecCount() == (N+1)){
+                        print("Completed.");
+                    }
+                }else{
+                    if(Process.rd.getCurrentExecCount() == (N+1)){
+                        print("Completed.");
                     }
                 }
             }

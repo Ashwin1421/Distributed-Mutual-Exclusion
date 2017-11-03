@@ -87,7 +87,7 @@ class processHandler extends Thread{
     }
 
     public void print(String text){
-        System.out.println("["+prop.Coordinator+"]$:"+text);
+        System.out.println("[p"+PID+"]$:"+text);
     }
     
     public void send(ObjectOutputStream out, Message msg){
@@ -205,12 +205,16 @@ class processHandler extends Thread{
             int N = prop.interval;
             while(true){
                 recvMsg = (Message)objin.readObject();
-                receive(recvMsg);
+                
                 if(recvMsg.getText().equalsIgnoreCase("REGISTER")){
+                    receive(recvMsg);
                     if(PROCESS_IDS.containsKey(processSocket)){
                         PROCESS_LIST.put(objout, PROCESS_IDS.get(processSocket));
-                        rd = new Raymond(PID, PROCESS_LIST);
-                        sk = new SuzukiKasami(PID, PROCESS_LIST);
+                        if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                            sk = new SuzukiKasami(PID, PROCESS_LIST);
+                        }else{
+                            rd = new Raymond(PID, PROCESS_LIST);
+                        }
                     }
                     if(PROCESS_IDS.size() == (prop.N-1)){
                         //configure();
@@ -220,30 +224,24 @@ class processHandler extends Thread{
                 
 
                 if(recvMsg.getText().equalsIgnoreCase("READY")){
+                    receive(recvMsg);
                     Coordinator.ready_count++;
                     if(Coordinator.ready_count == (prop.N-1)){
                         print("All processes ready to start computation.");
+
                         for(ObjectOutputStream out: PROCESS_LIST.keySet()){
                             sendMsg = new Message(PID);
                             sendMsg.setText("START");
                             send(out, sendMsg);
                         }
                         startComp = true;
+                        sleep();
                     }
                 }
                 
-                if(startComp){
-                    if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
-                        sk.requestCS(PID);
-                    }else{
-                        if(rd.isUsing()){
-                            rd.executeCS();
-                        }else{
-                            rd.requestCS(PID);
-                        }
-                    }
-                }
+                
                 if(recvMsg.getText().equalsIgnoreCase("REQUEST")){
+                    receive(recvMsg);
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
                         sk.receiveCSRequest(recvMsg.getPid(), recvMsg.getseqno());
                     }else{
@@ -252,22 +250,41 @@ class processHandler extends Thread{
                 }
                 
                 if(recvMsg.getText().equalsIgnoreCase("PRIVILEGE")){
-                    
+                    receive(recvMsg);
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
                         sk.setToken(true);
                         sk.executeCS();
                         sk.releaseCS(PID);
                     }else{
-                        if(rd.nextRequest()!=null){
-                            if(rd.nextRequest()==PID){
+                        rd.setToken();
+                        rd.assignPrivilege();
+                    } 
+                }
+                if(startComp){
+                    if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        if(sk.getCurrentExecCount()<=N){
+                            sk.requestCS(PID);
+                        }
+                    }else{
+                        if(rd.getCurrentExecCount() <= N){
+                            if(!rd.hasToken()){
+                                sleep();
+                                rd.requestCS(PID);
+                            }else{
                                 rd.executeCS();
-                                rd.removeRequest(PID);
-                            }
-                            if(rd.nextRequest()!=null){
-                                rd.grantToken(rd.nextRequest());
                             }
                         }
-                    } 
+                    }
+                }
+                
+                if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                    if(sk.getCurrentExecCount() == (N+1)){
+                        print("Completed.");
+                    }
+                }else{
+                    if(rd.getCurrentExecCount() == (N+1)){
+                        print("Completed.");
+                    }
                 }
             }
         } catch (IOException ex) {

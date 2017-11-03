@@ -2,4 +2,5 @@
 *.class
 # test dir
 test
-
+# .txt files
+*.txt
