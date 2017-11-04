@@ -1,5 +1,5 @@
 # Executable
-dist
+dist/
 # classes
 *.class
 # test dir
