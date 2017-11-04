@@ -17,6 +17,8 @@ import java.util.logging.Logger;
 import MutEx.SuzukiKasami;
 import java.util.Random;
 import Message.Message;
+import java.io.BufferedWriter;
+import java.io.FileWriter;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 
@@ -65,6 +67,7 @@ public class Coordinator {
 }
 
 class processHandler extends Thread{
+    static BufferedWriter outToFile;
     Socket processSocket;
     ObjectInputStream objin;
     ObjectOutputStream objout;
@@ -80,6 +83,14 @@ class processHandler extends Thread{
     public static int requestCount = 0;
     public static boolean released = false;
     static boolean startComp = false;
+    static int finCount = 0;
+    
+    //Performance data
+    static Map<Integer, Double> csInTimes = new HashMap<>();
+    static Map<Integer, Double> csOutTimes = new HashMap<>();
+    static Map<Integer, Integer> msgCounts = new HashMap<>();
+    static Map<Integer, Double> waitTimes = new HashMap<>();
+    
     
     public processHandler(Socket processSocket, Map<Socket, Integer> PROCESS_IDS){
         this.processSocket = processSocket;
@@ -104,6 +115,15 @@ class processHandler extends Thread{
         print("RECEIVED="+msg.toString());
     }
     
+    public void captureResult(Message msg){
+        receive(msg);
+        print("Total Msg Count = "+msg.getMsgCount()+", for pid="+msg.getPid());
+        print("Avg Wait time to enter CS = "+msg.getCSWaitTime()+", for pid="+msg.getPid());
+        waitTimes.put(msg.getPid(), msg.getCSWaitTime());
+        msgCounts.put(msg.getPid(), msg.getMsgCount());
+        csInTimes.put(msg.getPid(), msg.getCSInTime());
+        csOutTimes.put(msg.getPid(), msg.getCSOutTime());
+    }
     
     public Socket getProcessSocket(Integer id){
         for(Socket p: PROCESS_IDS.keySet()){
@@ -200,7 +220,7 @@ class processHandler extends Thread{
             objin = new ObjectInputStream(processSocket.getInputStream());
             
             System.out.println("Connected to ["+processSocket.getRemoteSocketAddress()+"].");
-            
+            boolean fin = false;
             
             int N = prop.interval;
             while(true){
@@ -243,6 +263,7 @@ class processHandler extends Thread{
                 if(recvMsg.getText().equalsIgnoreCase("REQUEST")){
                     receive(recvMsg);
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        //
                         sk.receiveCSRequest(recvMsg.getPid(), recvMsg.getseqno());
                     }else{
                         rd.receiveCSRequest(recvMsg.getPid());
@@ -252,39 +273,72 @@ class processHandler extends Thread{
                 if(recvMsg.getText().equalsIgnoreCase("PRIVILEGE")){
                     receive(recvMsg);
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
-                        sk.setToken(true);
+                        //
+                        sk.setToken();
+                        sk.updateLN(recvMsg.getLN());
+                        sk.updateQ(recvMsg.getQ());
                         sk.executeCS();
-                        sk.releaseCS(PID);
                     }else{
                         rd.setToken();
                         rd.assignPrivilege();
+                        rd.makeRequest();
                     } 
                 }
                 if(startComp){
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
-                        if(sk.getCurrentExecCount()<=N){
+                        if(sk.getCurrentExecCount()<=N && sk.getCurrentExecCount()>=2){
+                            //
+                            sleep();
                             sk.requestCS(PID);
                         }
                     }else{
                         if(rd.getCurrentExecCount() <= N){
-                            if(!rd.hasToken()){
-                                sleep();
-                                rd.requestCS(PID);
-                            }else{
-                                rd.executeCS();
-                            }
+                            sleep();
+                            rd.addRequest(PID);
+                            rd.assignPrivilege();
+                            rd.makeRequest();
                         }
                     }
                 }
                 
                 if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
                     if(sk.getCurrentExecCount() == (N+1)){
-                        print("Completed.");
+                        print("ok");
                     }
                 }else{
                     if(rd.getCurrentExecCount() == (N+1)){
-                        print("Completed.");
+                        csInTimes.put(PID, rd.getAvgExecutionTime());
+                        csOutTimes.put(PID, rd.getAvgReleaseTime());
+                        msgCounts.put(PID, rd.getTotalMsgCount(PID));
+                        waitTimes.put(PID, rd.getAvgWaitTime());
+                        fin = true;
                     }
+                }
+                if(recvMsg.getText().equalsIgnoreCase("FIN")){
+                    captureResult(recvMsg);
+                    finCount++;
+                    if(finCount == (prop.N-1)){
+                        print("Completed.");
+                        print("Received all Complete messages.");
+                    }
+                    if(fin){
+                    double t1 = csInTimes.values().stream().mapToDouble(val->val).average().getAsDouble();
+                    double t2 = csOutTimes.values().stream().mapToDouble(val->val).average().getAsDouble();
+                    double synchDelay = Math.abs(t1-t2);
+                    double mc = msgCounts.values().stream().mapToDouble(val->val).average().getAsDouble();
+                    double wt = waitTimes.values().stream().mapToDouble(val->val).average().getAsDouble();
+                    print("-------------------------------------");
+                    print("Avg. Synch Delay = "+synchDelay);
+                    print("Avg. Wait Time = "+wt);
+                    print("Avg. Msg Count = "+mc);
+                    for(ObjectOutputStream out : PROCESS_LIST.keySet()){
+                        Message msg = new Message(PID);
+                        msg.setText("TERMINATE");
+                        send(out, msg);
+                    }
+                    print("All processes terminated gracefully.");
+                    }
+                    //System.exit(0);
                 }
             }
         } catch (IOException ex) {

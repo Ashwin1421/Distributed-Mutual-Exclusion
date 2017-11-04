@@ -27,7 +27,7 @@ import java.util.logging.Logger;
 public class Process {
     //Offset port number along with process' own pid, to make every process'
     //server socket to be different on different machines.
-    int NB_PORT = 1400;
+    int NB_PORT = 2567;
     int PID;
     static ServerSocket nbSocket;
     static ObjectInputStream objin;
@@ -45,6 +45,8 @@ public class Process {
     public static int releaseCount = 0;
     public static int requestCount = 0;
     Message sendMsg = new Message(null);
+    
+    public static int finCount = 0;
     
     public Process(String HOST, int PORT){
         this.HOST = HOST;
@@ -137,8 +139,6 @@ public class Process {
 
     public void  start(){
         int N = prop.interval;
-        boolean released = false;
-
         synchronized(this){
         try {
             processSocket = new Socket(HOST, PORT);
@@ -215,16 +215,21 @@ public class Process {
                     receive(recvMsg);
                     sleep();
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        //
                         sk.requestCS(PID);
                     }else{
-                        rd.requestCS(PID);
+                        rd.addRequest(PID);
+                        rd.assignPrivilege();
+                        rd.makeRequest();
                     }
                 }
+                
                 
                 
                 if(recvMsg.getText().equalsIgnoreCase("REQUEST")){
                     receive(recvMsg);
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        //
                         sk.receiveCSRequest(recvMsg.getPid(), recvMsg.getseqno());
                     }else{
                         rd.receiveCSRequest(recvMsg.getPid());
@@ -234,22 +239,30 @@ public class Process {
                 if(recvMsg.getText().equalsIgnoreCase("PRIVILEGE")){
                     receive(recvMsg);
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
-                        sk.setToken(true);
+                        //
+                        sk.setToken();
+                        sk.updateQ(recvMsg.getQ());
+                        sk.updateLN(recvMsg.getLN());
                         sk.executeCS();
-                        sk.releaseCS(PID);
                     }else{
                         rd.setToken();
                         rd.assignPrivilege();
+                        rd.makeRequest();
                     }
                 }
+                
                 if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
                     if(sk.getCurrentExecCount() <= N && sk.getCurrentExecCount()>=2){
+                        //
+                        sleep();
                         sk.requestCS(PID);
                     }
                 }else{
                     if(rd.getCurrentExecCount() <= N && rd.getCurrentExecCount()>=2){
                         sleep();
-                        rd.requestCS(PID);
+                        rd.addRequest(PID);
+                        rd.assignPrivilege();
+                        rd.makeRequest();
                     }
                 }
 
@@ -259,9 +272,24 @@ public class Process {
                     }
                 }else{
                     if(rd.getCurrentExecCount() == (N+1)){
-                        print("Completed.");
-                        
+                        finCount++;
+                        if(finCount == 1){
+                            print("Completed Computation.");
+                            Message msg = new Message(PID);
+                            msg.setText("FIN");
+                            msg.setCSInTime(Process.rd.getAvgExecutionTime());
+                            msg.setCSOutTime(Process.rd.getAvgReleaseTime());
+                            msg.setCSWaitTime(Process.rd.getAvgWaitTime());
+                            msg.setMsgCount(Process.rd.getTotalMsgCount(PID));
+                            send(objout, msg);
+                        }
                     }
+                }
+                
+                
+                if(recvMsg.getText().equalsIgnoreCase("TERMINATE")){
+                    print("Ready to gracefully terminate");
+                    //System.exit(0);
                 }
             }
         
@@ -314,7 +342,6 @@ class neighbourHandler extends Thread{
     @Override
     public void run(){
         synchronized(this){
-        boolean released = false;
         try {
             objin = new ObjectInputStream(neighbourSocket.getInputStream());
             int N = prop.interval;
@@ -325,6 +352,7 @@ class neighbourHandler extends Thread{
                 //Accepting a request.
                 if(recvMsg.getText().equalsIgnoreCase("REQUEST")){
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
+                        //
                         Process.sk.receiveCSRequest(recvMsg.getPid(), recvMsg.getseqno());
                     }else{
                         Process.rd.receiveCSRequest(recvMsg.getPid());
@@ -334,24 +362,29 @@ class neighbourHandler extends Thread{
                 //Accepting Token and assigning it.
                 if(recvMsg.getText().equalsIgnoreCase("PRIVILEGE")){
                     if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
-                        Process.sk.setToken(true);
+                        //
+                        Process.sk.setToken();
+                        Process.sk.updateQ(recvMsg.getQ());
+                        Process.sk.updateLN(recvMsg.getLN());
                         Process.sk.executeCS();
-                        Process.sk.releaseCS(PID);
                     }else{
                         Process.rd.setToken();
                         Process.rd.assignPrivilege();
-                        
+                        Process.rd.makeRequest();
                     }
                 }
                 
                 if(prop.Algorithm.equalsIgnoreCase("Suzuki-Kasami")){
                     if(Process.sk.getCurrentExecCount() <= N && Process.sk.getCurrentExecCount()>=2){
+                        sleep();
                         Process.sk.requestCS(PID);
                     }
                 }else{
                     if(Process.rd.getCurrentExecCount() <= N && Process.rd.getCurrentExecCount()>=2){
                         sleep();
-                        Process.rd.requestCS(PID);
+                        Process.rd.addRequest(PID);
+                        Process.rd.assignPrivilege();
+                        Process.rd.makeRequest();
                     }
                 }
 
@@ -361,9 +394,24 @@ class neighbourHandler extends Thread{
                     }
                 }else{
                     if(Process.rd.getCurrentExecCount() == (N+1)){
-                        print("Completed.");
+                        Process.finCount++;
+                        if(Process.finCount == 1){
+                            print("Completed Computation.");
+                            print("in thread.");
+                            Message msg = new Message(PID);
+                            msg.setText("FIN");
+                            msg.setCSInTime(Process.rd.getAvgExecutionTime());
+                            msg.setCSOutTime(Process.rd.getAvgReleaseTime());
+                            msg.setCSWaitTime(Process.rd.getAvgWaitTime());
+                            msg.setMsgCount(Process.rd.getTotalMsgCount(PID));
+                            Process.objout.writeObject(msg);
+                            Process.objout.flush();
+                            print("SENT="+msg.toString());
+                        }
+                        
                     }
                 }
+                
             }
         } catch (IOException ex) {
             //Logger.getLogger(neighbourHandler.class.getName()).log(Level.SEVERE, null, ex);

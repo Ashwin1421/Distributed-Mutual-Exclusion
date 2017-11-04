@@ -10,6 +10,7 @@ import Utilities.Utils;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
@@ -35,13 +36,18 @@ public class Raymond implements Serializable {
     boolean done = false;
     
     static Queue<Integer> REQUEST_Q = new ConcurrentLinkedQueue<Integer>();
-    Integer[] msgCount;
+
     Map<ObjectOutputStream, Integer> PROCESS_LIST;
     Utils prop = new Utils();
     long synchDelay=0;
     long t1=0,t2=0,t3=0;
     static int execCount = 1;
     Date time = new Date();
+    //Peformance data
+    Integer[] msgCount;
+    Queue<Long> t1List = new LinkedList<>();
+    Queue<Long> t2List = new LinkedList<>();
+    Queue<Long> t3List = new LinkedList<>();
     
     public Raymond(Integer pid, Map<ObjectOutputStream, Integer> PROCESS_LIST){
         this.pid = pid;
@@ -62,10 +68,12 @@ public class Raymond implements Serializable {
     }
     
     
-    public void sendTo(Integer pid, Message msg){
+    public void sendTo(Integer i, String text){
         for(ObjectOutputStream out: PROCESS_LIST.keySet()){
-            if(PROCESS_LIST.get(out).equals(pid)){
+            if(PROCESS_LIST.get(out).equals(i)){
                 try {
+                    Message msg = new Message(pid);
+                    msg.setText(text);
                     out.writeObject(msg);
                     out.flush();
                     print("SENT="+msg.toString());
@@ -77,17 +85,17 @@ public class Raymond implements Serializable {
     }
     
     public long getSynchDelay(long t1, long t2){
-        return t1 > t2 ? t1-t2 : t2-t1;
+        return Math.abs(t1-t2);
     }
     
     public Integer getHolder() {
         return holder;
     }
-    public long getExecutionTime(){
-        return t1;
+    public double getAvgExecutionTime(){
+        return t1List.stream().mapToDouble(val->val).average().orElse(0)/prop.interval;
     }
-    public long getReleaseTime(){
-        return t2;
+    public double getAvgReleaseTime(){
+        return t2List.stream().mapToDouble(val->val).average().getAsDouble()/prop.interval;
     }
     public Integer nextRequest() {
         return REQUEST_Q.peek();
@@ -100,11 +108,13 @@ public class Raymond implements Serializable {
         return execCount;
     }
     
-    public long getWaitTime(){
-        return t3 < t1 ? t1-t3 : t3-t1;
+    public double getAvgWaitTime(){
+        double d1 = t1List.stream().mapToDouble(val->val).average().getAsDouble();
+        double d2 = t3List.stream().mapToDouble(val->val).average().getAsDouble();
+        return Math.abs((d1-d2)/prop.interval);
     }
-    public void removeRequest(){
-        REQUEST_Q.poll();
+    public void addRequest(Integer pid){
+        REQUEST_Q.add(pid);
     }
     
     public Integer getTotalMsgCount(Integer i){
@@ -117,19 +127,15 @@ public class Raymond implements Serializable {
     /**
      * Making a request to enter CS.
      */
-    public void requestCS(int pid){
-        if(!hasToken() && !REQUEST_Q.isEmpty()){
-            REQUEST_Q.add(pid);
-        }else if(!hasToken() && REQUEST_Q.isEmpty() && !requested && !done){
-            Message sendMsg = new Message(pid);
-            sendMsg.setText("REQUEST");
-            print("Requesting token from="+holder+", time="+time.toGMTString());
+    public void makeRequest(){
+        if(!hasToken() && !REQUEST_Q.isEmpty() && !requested){
             requested = true;
             msgCount[pid]++;
             t3 = System.currentTimeMillis();
-            REQUEST_Q.add(pid);
-            sendTo(holder, sendMsg);
-        }    
+            t3List.add(t3);
+            print("Requesting token from "+holder+", current time="+time.toGMTString());
+            sendTo(holder, "REQUEST");
+        }
     }
     /**
      * Accepting a request.
@@ -139,50 +145,27 @@ public class Raymond implements Serializable {
      */
     public void receiveCSRequest(int j){
         REQUEST_Q.add(j);
-        if(!hasToken() && holder!=pid && !forwardrequest && !requested){
-            print("Forwarding request to="+holder);
-            msgCount[j]++;
-            forwardrequest = true;
-            Message sendMsg = new Message(pid);
-            sendMsg.setText("REQUEST");
-            sendTo(holder, sendMsg);
-        }
-        if(holder==pid && !insideCS && !REQUEST_Q.isEmpty() && nextRequest()==j){
-            int grant = REQUEST_Q.poll();
-            grantToken(grant);
-            if(!REQUEST_Q.isEmpty()){
-                sendRequest(grant);
-            }
-        }
+        assignPrivilege();
+        makeRequest();
     }
     public void assignPrivilege(){
         if(holder==pid && !insideCS && !REQUEST_Q.isEmpty()){
             holder = REQUEST_Q.poll();
             requested = false;
-            if(holder==pid){
+            if(holder==pid && done){
+                REQUEST_Q.remove();
+            }
+            if(holder==pid && !done){
                 executeCS();
             }else{
                 grantToken(holder);
                 if(!REQUEST_Q.isEmpty()){
-                    sendRequest(holder);
+                    makeRequest();
                 }
             }
         }
     }
-    /**
-     * Sending a request.
-     * Different than making a request for your own.
-     * This is making a request for the 
-     * remaining request in its request queue.
-     */
-    public void sendRequest(Integer i){
-        if(!requested){
-            REQUEST_Q.add(pid);
-            Message sendMsg = new Message(pid);
-            sendMsg.setText("REQUEST");
-            sendTo(i, sendMsg);
-        }
-    }
+
     /**
      * Granting the token to 
      * the process at the head of 
@@ -191,30 +174,34 @@ public class Raymond implements Serializable {
     public void grantToken(Integer i){
         token = false;
         holder = i;
-        Message sendMsg = new Message(pid);
-        sendMsg.setText("PRIVILEGE");
         print("Granting token to="+i);
-        sendTo(i,sendMsg);
+        sendTo(i,"PRIVILEGE");
     }
     
     public void executeCS(){
-
         insideCS = true;
-        requested = false;
-        forwardrequest = false;
         print("Entering CS for "+prop.t3+" ms."+"[#"+execCount+"]");
         if(execCount==prop.interval){
             done = true;
+            while(REQUEST_Q.remove(pid));
         }
         execCount++;
         t1 = System.currentTimeMillis();
+        t1List.add(t1);
         try {
             Thread.sleep(prop.t3);
         } catch (InterruptedException ex) {
             Logger.getLogger(Raymond.class.getName()).log(Level.SEVERE, null, ex);
         }
         t2 = System.currentTimeMillis();
+        t2List.add(t2);
+        exitCS();
     }
     
+    public void exitCS(){
+        insideCS = false;
+        assignPrivilege();
+        makeRequest();
+    }
     
 }

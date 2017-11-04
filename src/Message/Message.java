@@ -23,6 +23,11 @@ public class Message implements Serializable{
     Integer seqNo;
     Queue<Integer> Q;
     Integer[] LN;
+    //Performance data
+    int totalMsgCount;
+    double csIn;
+    double csOut;
+    double csWait;
     
     public Message(Integer pid){
         this.pid = pid;
@@ -83,6 +88,40 @@ public class Message implements Serializable{
     public Integer[] getLN() {
         return LN;
     }
+    
+    
+    public void setMsgCount(int totalMsgCount) {
+        this.totalMsgCount = totalMsgCount;
+    }
+    
+    public int getMsgCount(){
+        return totalMsgCount;
+    }
+    
+    public void setCSInTime(double csIn){
+        this.csIn = csIn;
+    }
+    
+    public double getCSInTime(){
+        return csIn;
+    }
+    
+    public void setCSOutTime(double csOut){
+        this.csOut = csOut;
+    }
+    
+    public double getCSOutTime(){
+        return csOut;
+    }
+    
+    public void setCSWaitTime(double csWait){
+        this.csWait = csWait;
+    }
+    
+    public double getCSWaitTime(){
+        return csWait;
+    }
+    
     @Override
     public String toString(){
         return "Text="+text+",pid="+pid;
